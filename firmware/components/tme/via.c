@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include "via.h"
 #include "m68k.h"
+#include "esp_system.h"
 
 void viaCbPortAWrite(unsigned int val);
 void viaCbPortBWrite(unsigned int val);

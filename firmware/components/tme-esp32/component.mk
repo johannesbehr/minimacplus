@@ -1,7 +1,7 @@
 #Component makefile
 
 COMPONENT_SRCDIRS := .
-COMPONENT_OBJS := hd.o hexdump.o localtalk.o main.o mpu6050.o mpumouse.o snd.o
+COMPONENT_OBJS := hd.o hexdump.o localtalk.o main.o mpu6050.o mpumouse.o snd.o spi_lcd.o spi_semaphore.o rom.o
 
 ifdef CONFIG_TME_DISP_MIPI
 COMPONENT_OBJS += mipi_lcd.o adns9500.o

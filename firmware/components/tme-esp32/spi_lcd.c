@@ -16,18 +16,21 @@
 #include "driver/spi_master.h"
 #include "soc/gpio_struct.h"
 #include "driver/gpio.h"
+#include "driver/ledc.h"
 #include "esp_heap_alloc_caps.h"
 #include "mpumouse.h"
-#include "mouse.h"
+#include "../tme/mouse.h"
+#include "../odroid/odroid_input.h"
+#include "spi_semaphore.h"
 
-#define PIN_NUM_MISO 25
-#define PIN_NUM_MOSI 23
-#define PIN_NUM_CLK  19
-#define PIN_NUM_CS   22
+#define PIN_NUM_MISO GPIO_NUM_19 //25
+#define PIN_NUM_MOSI GPIO_NUM_23 // 23
+#define PIN_NUM_CLK  GPIO_NUM_18 //19
+#define PIN_NUM_CS   GPIO_NUM_5 //22
 
-#define PIN_NUM_DC   21
-#define PIN_NUM_RST  18
-#define PIN_NUM_BCKL 5		//backlight enable
+#define PIN_NUM_DC   GPIO_NUM_21 //21
+#define PIN_NUM_RST  GPIO_NUM_19//18
+#define PIN_NUM_BCKL GPIO_NUM_14//5		//backlight enable
 
 
 /*
@@ -50,7 +53,7 @@ static const ili_init_cmd_t ili_init_cmds[]={
     {0xC1, {0x11}, 1},
     {0xC5, {0x35, 0x3E}, 2},
     {0xC7, {0xBE}, 1},
-    {0x36, {0x28}, 1},
+    {0x36, {0xE8}, 1},
     {0x3A, {0x55}, 1},
     {0xB1, {0x00, 0x1B}, 2},
     {0xF2, {0x08}, 1},
@@ -67,7 +70,98 @@ static const ili_init_cmd_t ili_init_cmds[]={
     {0, {0}, 0xff},
 };
 
+const int DUTY_MAX = 0x1fff;
+const int LCD_BACKLIGHT_ON_VALUE = 1;
+
 static spi_device_handle_t spi;
+bool isBackLightIntialized = false;
+
+static void backlight_init()
+{
+    // Note: In esp-idf v3.0, settings flash speed to 80Mhz causes the LCD controller
+    // to malfunction after a soft-reset.
+
+    // (duty range is 0 ~ ((2**bit_num)-1)
+
+
+    //configure timer0
+    ledc_timer_config_t ledc_timer;
+    memset(&ledc_timer, 0, sizeof(ledc_timer));
+
+    ledc_timer.bit_num = LEDC_TIMER_13_BIT; //set timer counter bit number
+    ledc_timer.freq_hz = 5000;              //set frequency of pwm
+    ledc_timer.speed_mode = LEDC_LOW_SPEED_MODE;   //timer mode,
+    ledc_timer.timer_num = LEDC_TIMER_0;    //timer index
+
+
+    ledc_timer_config(&ledc_timer);
+
+
+    //set the configuration
+    ledc_channel_config_t ledc_channel;
+    memset(&ledc_channel, 0, sizeof(ledc_channel));
+
+    //set LEDC channel 0
+    ledc_channel.channel = LEDC_CHANNEL_0;
+    //set the duty for initialization.(duty range is 0 ~ ((2**bit_num)-1)
+    ledc_channel.duty = (LCD_BACKLIGHT_ON_VALUE) ? 0 : DUTY_MAX;
+    //GPIO number
+    ledc_channel.gpio_num = PIN_NUM_BCKL;
+    //GPIO INTR TYPE, as an example, we enable fade_end interrupt here.
+    ledc_channel.intr_type = LEDC_INTR_FADE_END;
+    //set LEDC mode, from ledc_mode_t
+    ledc_channel.speed_mode = LEDC_LOW_SPEED_MODE;
+    //set LEDC timer source, if different channel use one timer,
+    //the frequency and bit_num of these channels should be the same
+    ledc_channel.timer_sel = LEDC_TIMER_0;
+
+
+    ledc_channel_config(&ledc_channel);
+
+
+    //initialize fade service.
+    ledc_fade_func_install(0);
+
+    // duty range is 0 ~ ((2**bit_num)-1)
+    ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, (LCD_BACKLIGHT_ON_VALUE) ? DUTY_MAX : 0, 500);
+    ledc_fade_start(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, LEDC_FADE_NO_WAIT);
+
+    isBackLightIntialized = true;
+}
+
+void backlight_percentage_set(int value)
+{
+    int duty = DUTY_MAX * (value * 0.01f);
+
+    // //set the configuration
+    // ledc_channel_config_t ledc_channel;
+    // memset(&ledc_channel, 0, sizeof(ledc_channel));
+    //
+    // //set LEDC channel 0
+    // ledc_channel.channel = LEDC_CHANNEL_0;
+    // //set the duty for initialization.(duty range is 0 ~ ((2**bit_num)-1)
+    // ledc_channel.duty = duty;
+    // //GPIO number
+    // ledc_channel.gpio_num = LCD_PIN_NUM_BCKL;
+    // //GPIO INTR TYPE, as an example, we enable fade_end interrupt here.
+    // ledc_channel.intr_type = LEDC_INTR_FADE_END;
+    // //set LEDC mode, from ledc_mode_t
+    // ledc_channel.speed_mode = LEDC_LOW_SPEED_MODE;
+    // //set LEDC timer source, if different channel use one timer,
+    // //the frequency and bit_num of these channels should be the same
+    // ledc_channel.timer_sel = LEDC_TIMER_0;
+    //
+    //
+    // ledc_channel_config(&ledc_channel);
+
+    ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty, 500);
+    ledc_fade_start(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, LEDC_FADE_NO_WAIT);
+}
+
+int is_backlight_initialized()
+{
+    return isBackLightIntialized;
+}
 
 
 //Send a command to the ILI9341. Uses spi_device_transmit, which waits until the transfer is complete.
@@ -101,7 +195,7 @@ void ili_data(spi_device_handle_t spi, const uint8_t *data, int len)
 //set the D/C line to the value indicated in the user field.
 void ili_spi_pre_transfer_callback(spi_transaction_t *t) 
 {
-    int dc=(int)t->user;
+    int dc=(int)t->user & 0x01;
     gpio_set_level(PIN_NUM_DC, dc);
 }
 
@@ -111,15 +205,17 @@ void ili_init(spi_device_handle_t spi)
     int cmd=0;
     //Initialize non-SPI GPIOs
     gpio_set_direction(PIN_NUM_DC, GPIO_MODE_OUTPUT);
-    gpio_set_direction(PIN_NUM_RST, GPIO_MODE_OUTPUT);
+   // gpio_set_direction(PIN_NUM_RST, GPIO_MODE_OUTPUT);
     gpio_set_direction(PIN_NUM_BCKL, GPIO_MODE_OUTPUT);
 
     //Reset the display
+	/*
     gpio_set_level(PIN_NUM_RST, 0);
     vTaskDelay(100 / portTICK_RATE_MS);
     gpio_set_level(PIN_NUM_RST, 1);
     vTaskDelay(100 / portTICK_RATE_MS);
-
+*/
+	
     //Send all the commands
     while (ili_init_cmds[cmd].databytes!=0xff) {
         ili_cmd(spi, ili_init_cmds[cmd].cmd);
@@ -131,7 +227,11 @@ void ili_init(spi_device_handle_t spi)
     }
 
     ///Enable backlight
-    gpio_set_level(PIN_NUM_BCKL, 0);
+    //gpio_set_level(PIN_NUM_BCKL, 0);
+	
+	backlight_init();
+
+	
 }
 
 
@@ -224,13 +324,16 @@ void IRAM_ATTR displayTask(void *arg) {
 		.spics_io_num=PIN_NUM_CS,               //CS pin
 		.queue_size=10,                          //We want to be able to queue 7 transactions at a time
 		.pre_cb=ili_spi_pre_transfer_callback,  //Specify pre-transfer callback to handle D/C line
+		.flags = SPI_DEVICE_NO_DUMMY,
 	};
 
 	printf("*** Display task starting.\n");
 
+	spi_semaphore_take();
+	
 	//Initialize the SPI bus
-	ret=spi_bus_initialize(HSPI_HOST, &buscfg, 1);
-	assert(ret==ESP_OK);
+	//ret=spi_bus_initialize(HSPI_HOST, &buscfg, 1);
+	//assert(ret==ESP_OK);
 	//Attach the LCD to the SPI bus
 	ret=spi_bus_add_device(HSPI_HOST, &devcfg, &spi);
 	assert(ret==ESP_OK);
@@ -245,9 +348,15 @@ void IRAM_ATTR displayTask(void *arg) {
 		trans[x].user=(void*)1;
 		trans[x].tx_buffer=&dmamem[x];
 	}
+	
+	spi_semaphore_give();
 
 	while(1) {
-		xSemaphoreTake(dispSem, portMAX_DELAY);
+		xSemaphoreTake(dispSem, portMAX_DELAY); // Wait until Displaydata is available
+		//printf("Display: Taking semaphore..\r\n");
+		spi_semaphore_take();
+		//printf("Display: Got semaphore.\r\n");
+		
 		uint8_t *myData=(uint8_t*)currFbPtr;
 
 		send_header_start(spi, 0, 0, 320, 240);
@@ -286,27 +395,85 @@ void IRAM_ATTR displayTask(void *arg) {
 			ret=spi_device_get_trans_result(spi, &rtrans, portMAX_DELAY);
 			assert(ret==ESP_OK);
 			inProgress--;
+			//vTaskDelay(1);
 		}
+				
+		//printf("Display: Giving semaphore..\r\n");
+		spi_semaphore_give();
+		//printf("Display: Semaphore given.\r\n");
+		vTaskDelay(10 / portTICK_RATE_MS);
+		
 	}
 }
 
+odroid_gamepad_state joystick;
 
+int mv_x = 0;
+int mv_y = 0;
+int v_max = 10;
 
 void dispDraw(uint8_t *mem) {
-	int dx, dy, btn;
+	int dx=0, dy=0, btn=0;
 	currFbPtr=mem;
 	xSemaphoreGive(dispSem);
-	mpuMouseGetDxDyBtn(&dx, &dy, &btn);
+
+	odroid_input_gamepad_read(&joystick);
+
+	if(joystick.values[ODROID_INPUT_DOWN]){
+		mv_y++;
+		dy=mv_y>>2;
+	}else{
+		if(mv_y>0){
+			mv_y = 0;
+		}
+	}
+	
+	if(joystick.values[ODROID_INPUT_UP]){
+		mv_y--;
+		dy=mv_y>>2;
+	}else{
+		if(mv_y<0){
+			mv_y = 0;
+		}
+	}
+	
+	
+	if(joystick.values[ODROID_INPUT_RIGHT]){
+		mv_x++;
+		dx=mv_x>>2;
+	}else{
+		if(mv_x>0){
+			mv_x = 0;
+		}
+	}
+	if(joystick.values[ODROID_INPUT_LEFT]){
+		mv_x--;
+		dx=mv_x>>2;
+	}else{
+		if(mv_x<0){
+			mv_x = 0;
+		}
+	}
+
+
+	if(joystick.values[ODROID_INPUT_A]){btn =1;}
+//	if(joystick.values[ODROID_INPUT_B])js +=0x20;
+//	if(joystick.values[ODROID_INPUT_SELECT])js +=0x40;
+//	if(joystick.values[ODROID_INPUT_START])js +=0x80;
+	
+	
+	
+	//mpuMouseGetDxDyBtn(&dx, &dy, &btn);
 	mouseMove(dx, dy, btn);
 }
-
 
 void dispInit() {
 	printf("spi_lcd_init()\n");
     dispSem=xSemaphoreCreateBinary();
+	/*
 #if CONFIG_FREERTOS_UNICORE
-	xTaskCreatePinnedToCore(&displayTask, "display", 3000, NULL, 6, NULL, 0);
-#else
+	xTaskCreatePinnedToCore(&displayTask, "display", 3000, NULL, 5, NULL, 0);
+#else*/
 	xTaskCreatePinnedToCore(&displayTask, "display", 3000, NULL, 6, NULL, 1);
-#endif
+//#endif
 }

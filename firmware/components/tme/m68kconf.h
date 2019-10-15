@@ -191,35 +191,141 @@ void m68k_instruction();
 #include <byteswap.h>
 #include <stdint.h>
 
+#include <stdio.h>
+#include <stdlib.h>
+#include "rom.h"
+
+#define MEMMAP_ES 0x20000 //entry size = 128K
+#define MEMMAP_SHIFT 0x11 //Means that dividing by this is equal to 11 shifts to the right
+extern int macRom_addr;
+
 extern unsigned char *m68k_pcbase;
+
+extern unsigned char *macRom;
 
 static inline unsigned int m68k_read_immediate_16(unsigned int address) {
 	address&=0xFFFFFF;
-	uint16_t *p=(uint16_t*)(m68k_pcbase+address);
+	if((address>>MEMMAP_SHIFT)==macRom_addr){
+		uint16_t res = read_rom_memory_16(address % MEMMAP_ES);
+		return (res);
+		/*if(res !=__bswap_16(*p)){
+			printf("m68k_read_immediate_16 in Rom at: %p - %x\r\n",m68k_pcbase, address);
+			printf("Wrong Value: %d - %d\r\n",res, __bswap_16(*p));
+		}*/
+	}/*else if((m68k_pcbase + 0x400000 == macRom)){
+		printf("GULP in m68k_read_immediate_16!\r\n");
+	}*/
+	
+	uint16_t *p=(uint16_t*)(m68k_pcbase+address);	
+/*		if((p>=macRom)&&p<(macRom + 128*1024)){
+			printf("Reading of Rom(i16): %d !!!!\r\n", address);
+	}*/
+
 	return __bswap_16(*p);
 }
 
 static inline unsigned int m68k_read_immediate_32(unsigned int address) {
 	address&=0xFFFFFF;
-	uint32_t *p=(uint32_t*)(m68k_pcbase+address);
+	if((address>>MEMMAP_SHIFT)==macRom_addr||address==0||address==4){
+		uint32_t res = read_rom_memory_32(address % MEMMAP_ES);
+		return res;
+		/*
+		if(res!= __bswap_32(*p)){
+			printf("m68k_read_immediate_32 in Rom at: %p - %x\r\n",m68k_pcbase, address);
+			printf("Wrong Value: %d - %d\r\n",res, __bswap_32(*p));
+		}*/
+	}/*else if((m68k_pcbase + 0x400000 == macRom)){
+		printf("GULP in m68k_read_immediate_32!\r\n");
+	}*/
+	
+	uint32_t *p=(uint32_t*)(m68k_pcbase + address);	
+/*
+	if((p>=macRom)&&p<(macRom + 128*1024)){
+			printf("Reading of Rom(i32): %d !!!!\r\n", address);
+	}*/
+
 	return __bswap_32(*p);
 }
 
 static inline unsigned int  m68k_read_pcrelative_8(unsigned int address) {
 	address&=0xFFFFFF;
+	if((address>>MEMMAP_SHIFT)==macRom_addr){
+		return (read_rom_memory_8(address % MEMMAP_ES));
+		/*if(res !=__bswap_16(*p)){
+			printf("m68k_read_immediate_16 in Rom at: %p - %x\r\n",m68k_pcbase, address);
+			printf("Wrong Value: %d - %d\r\n",res, __bswap_16(*p));
+		}*/
+	}/*else if((m68k_pcbase + 0x400000 == macRom)){
+		printf("GULP in m68k_read_pcrelative_8!\r\n");
+	}*/
 	uint8_t *p=(uint8_t*)(m68k_pcbase+address);
+	/*if((p>=macRom)&&p<(macRom + 128*1024)){
+			printf("Reading of Rom(p8): %d !!!!\r\n", address);
+	}*/
+
 	return *p;
 }
 
 static inline unsigned int  m68k_read_pcrelative_16(unsigned int address) {
 	address&=0xFFFFFF;
-	uint16_t *p=(uint16_t*)(m68k_pcbase+address);
+	/*
+	if((address>>MEMMAP_SHIFT)==macRom_addr){
+		printf("m68k_read_pcrelative_16 in Rom at: %p - %x\r\n",m68k_pcbase, address);
+	}
+	uint16_t *p=(uint16_t*)(m68k_pcbase+(address&0xFFFFFF));
+	return __bswap_16(*p);*/
+	
+	
+	
+	if((address>>MEMMAP_SHIFT)==macRom_addr){
+		uint16_t res = read_rom_memory_16(address % MEMMAP_ES);
+		return (res);
+		/*if(res !=__bswap_16(*p)){
+			printf("m68k_read_immediate_16 in Rom at: %p - %x\r\n",m68k_pcbase, address);
+			printf("Wrong Value: %d - %d\r\n",res, __bswap_16(*p));
+		}*/
+	}
+	/*else if((m68k_pcbase + 0x400000 == macRom)){
+		printf("GULP in m68k_read_pcrelative_16!\r\n");
+		printf("m68k_pcbase at:%p\r\n",m68k_pcbase);
+		printf("Macrom at:%p\r\n",macRom);
+		printf("Address:%d\r\n",address);
+		
+	}*/
+	
+	
+	uint16_t *p=(uint16_t*)(m68k_pcbase+address);	
+	/*if((p>=macRom)&&p<(macRom + 128*1024)){
+			printf("Reading of Rom(p16): %d !!!!\r\n", address);
+	}*/
 	return __bswap_16(*p);
 }
 
 static inline unsigned int  m68k_read_pcrelative_32(unsigned int address) {
 	address&=0xFFFFFF;
-	uint32_t *p=(uint32_t*)(m68k_pcbase+address);
+	/*if((address>>MEMMAP_SHIFT)==macRom_addr){
+		printf("m68k_read_pcrelative_32 in Rom at: %p - %x\r\n",m68k_pcbase, address);
+	}
+	uint32_t *p=(uint32_t*)(m68k_pcbase+(address&0xFFFFFF));
+	return __bswap_32(*p);*/
+	
+	
+	
+	
+	if((address>>MEMMAP_SHIFT)==macRom_addr){
+		uint32_t res = read_rom_memory_32(address % MEMMAP_ES);
+		return res;
+		/*
+		if(res!= __bswap_32(*p)){
+			printf("m68k_read_immediate_32 in Rom at: %p - %x\r\n",m68k_pcbase, address);
+			printf("Wrong Value: %d - %d\r\n",res, __bswap_32(*p));
+		}*/
+	}/*else if((m68k_pcbase + 0x400000 == macRom)){
+		printf("GULP in m68k_read_pcrelative_32!\r\n");
+	}*/
+	
+	
+	uint32_t *p=(uint32_t*)(m68k_pcbase+address);	
 	return __bswap_32(*p);
 }
 

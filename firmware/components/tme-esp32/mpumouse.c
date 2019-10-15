@@ -14,8 +14,8 @@
 #include <stdlib.h>
 #include "esp_err.h"
 
-#include "emu.h"
-#include "tmeconfig.h"
+#include "../tme/emu.h"
+#include "../tme/tmeconfig.h"
 
 #include "mpu6050.h"
 #include "mpumouse.h"

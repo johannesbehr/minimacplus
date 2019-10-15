@@ -25,6 +25,7 @@
 #include "rtc.h"
 #include "ncr.h"
 #include "hd.h"
+#include "rom.h"
 #include "snd.h"
 #include "mouse.h"
 #include <stdbool.h>
@@ -35,6 +36,7 @@
 
 
 unsigned char *macRom;
+int macRom_addr = 0;
 
 #if (TME_CACHESIZE!=0)
 #define USE_EXTERNAL_RAM 1
@@ -125,31 +127,33 @@ typedef struct {
 	};
 } MemmapEnt;
 
-#define MEMMAP_ES 0x20000 //entry size
+#define MEMMAP_ES 0x20000 //entry size = 128K
+#define MEMMAP_SHIFT 0x11 //Means that dividing by this is equal to 11 shifts to the right
 #define MEMMAP_MAX_ADDR 0x1000000
 //Memmap describing 128 128K blocks of memory, from 0 to 0x1000000 (16MiB).
-MemmapEnt memmap[MEMMAP_MAX_ADDR/MEMMAP_ES];
+MemmapEnt memmap[MEMMAP_MAX_ADDR>>MEMMAP_SHIFT];
 
 static void regenMemmap(int remapRom) {
 	int i;
 	//Default handler
-	for (i=0; i<MEMMAP_MAX_ADDR/MEMMAP_ES; i++) {
+	for (i=0; i<(MEMMAP_MAX_ADDR>>MEMMAP_SHIFT); i++) {
 		memmap[i].memAddr=0;
 		memmap[i].cb=unhandledAccessCb;
 	}
 
 	//0-0x400000 is RAM, or ROM when remapped
 	if (remapRom) {
+		macRom_addr = 0;
 		memmap[0].memAddr=macRom;
 		memmap[0].flags=FLAG_RO;
-		for (i=1; i<0x400000/MEMMAP_ES; i++) {
+		for (i=1; i<(0x400000>>MEMMAP_SHIFT); i++) {
 			//Do not point at ROM again, but at... something else. Abuse RAM here.
 			//If pointed at ROM again, ROM will think this machine does not have SCSI.
 			memmap[i].memAddr=NULL;
 			memmap[i].cb=bogusReadCb;
 		}
 	} else {
-		for (i=0; i<0x400000/MEMMAP_ES; i++) {
+		for (i=0; i<(0x400000>>MEMMAP_SHIFT); i++) {
 #if USE_EXTERNAL_RAM
 			memmap[i].memAddr=MEMADDR_DUMMY_CACHE;
 #else
@@ -160,22 +164,23 @@ static void regenMemmap(int remapRom) {
 	}
 	
 	//0x40000-0x50000 is ROM
-	memmap[0x400000/MEMMAP_ES].memAddr=macRom;
-	memmap[0x400000/MEMMAP_ES].flags=FLAG_RO;
-	for (i=0x400000/MEMMAP_ES+1; i<0x500000/MEMMAP_ES; i++) {
+	macRom_addr = 0x400000>>MEMMAP_SHIFT;
+	memmap[0x400000>>MEMMAP_SHIFT].memAddr=macRom;
+	memmap[0x400000>>MEMMAP_SHIFT].flags=FLAG_RO;
+	for (i=(0x400000>>MEMMAP_SHIFT)+1; i<(0x500000>>MEMMAP_SHIFT); i++) {
 		//Again, point to crap or SCSI won't work.
 		memmap[i].memAddr=0;
 		memmap[i].cb=bogusReadCb;
 	}
 
 	//0x580000-0x600000 is SCSI controller
-	for (i=0x580000/MEMMAP_ES; i<0x600000/MEMMAP_ES; i++) {
+	for (i=(0x580000>>MEMMAP_SHIFT); i<(0x600000>>MEMMAP_SHIFT); i++) {
 		memmap[i].memAddr=NULL;
 		memmap[i].cb=ncrAccessCb;
 	}
 
 	//0x600000-0x700000 is RAM
-	for (i=0x600000/MEMMAP_ES; i<0x700000/MEMMAP_ES; i++) {
+	for (i=(0x600000>>MEMMAP_SHIFT); i<(0x700000>>MEMMAP_SHIFT); i++) {
 #if USE_EXTERNAL_RAM
 		memmap[i].memAddr=MEMADDR_DUMMY_CACHE;
 #else
@@ -185,18 +190,18 @@ static void regenMemmap(int remapRom) {
 	}
 
 	//0x800000-0xC00000 is SSC
-	for (i=0x800000/MEMMAP_ES; i<0xC00000/MEMMAP_ES; i++) {
+	for (i=(0x800000>>MEMMAP_SHIFT); i<(0xC00000>>MEMMAP_SHIFT); i++) {
 		memmap[i].memAddr=NULL;
 		memmap[i].cb=sscAccessCb;
 	}
 
 	//0xC00000-0xE00000 is IWM
-	for (i=0xc00000/MEMMAP_ES; i<0xe00000/MEMMAP_ES; i++) {
+	for (i=(0xc00000>>MEMMAP_SHIFT); i<(0xe00000>>MEMMAP_SHIFT); i++) {
 		memmap[i].memAddr=NULL;
 		memmap[i].cb=iwmAccessCb;
 	}
 	//0xE80000-0xF00000 is VIA
-	for (i=0xE80000/MEMMAP_ES; i<0xF00000/MEMMAP_ES; i++) {
+	for (i=(0xE80000>>MEMMAP_SHIFT); i<(0xF00000>>MEMMAP_SHIFT); i++) {
 		memmap[i].memAddr=NULL;
 		memmap[i].cb=viaAccessCb;
 	}
@@ -227,6 +232,7 @@ static uint8_t cacheEnt[CACHEENTCNT];
 static CacheSlot cacheSlot[CACHESLOTCNT+FBSLOTCNT*2];
 
 static int cacheSwapPos=0;
+
 
 #define MMAP_RAM_PTR(ent, addr) ((ent->memAddr==MEMADDR_DUMMY_CACHE)?getRamPtr(addr&(TME_RAMSIZE-1)):&ent->memAddr[addr&(MEMMAP_ES-1)])
 
@@ -349,14 +355,23 @@ static void ramInit() {
 
 const inline static MemmapEnt *getMmmapEnt(const unsigned int address) {
 	if (address>=MEMMAP_MAX_ADDR) return &memmap[127];
-	return &memmap[address/MEMMAP_ES];
+	return &memmap[(address>>MEMMAP_SHIFT)];
 }
 
 unsigned int m68k_read_memory_8(unsigned int address) {
 	const MemmapEnt *mmEnt=getMmmapEnt(address);
+	if((address>>MEMMAP_SHIFT)==macRom_addr){
+		return(read_rom_memory_8(address & (MEMMAP_ES-1)));
+	}
+
 	if (mmEnt->memAddr) {
 		uint8_t *p;
 		p=(uint8_t*)MMAP_RAM_PTR(mmEnt, address);
+		/*
+		if((p>=macRom)&&p<(macRom + 128*1024)){
+			printf("Reading of Rom(e8): %d !!!!\r\n", address);
+		}*/
+
 		return *p;
 	} else {
 		return mmEnt->cb(address, 0, 0);
@@ -366,9 +381,25 @@ unsigned int m68k_read_memory_8(unsigned int address) {
 unsigned int m68k_read_memory_16(unsigned int address) {
 	const MemmapEnt *mmEnt=getMmmapEnt(address);
 	if ((address&1)!=0) printf("%s: Unaligned access to %x!\n", __FUNCTION__, address);
+	
+	if((address>>MEMMAP_SHIFT)==macRom_addr){
+		return(read_rom_memory_16(address & (MEMMAP_ES-1)));
+	}
+	
 	if (mmEnt->memAddr) {
 		uint16_t *p;
 		p=(uint16_t*)MMAP_RAM_PTR(mmEnt, address);
+
+/*		
+		if(mmEnt->memAddr==macRom){
+		//if(((address>>MEMMAP_SHIFT)==0)){
+			int value = read_rom_memory_16(address & (MEMMAP_ES-1));
+			printf("Read ROM at %d:%d : %d\r\n", address, *p,value);
+		}*/
+		/*
+		if((p>=macRom)&&p<(macRom + 128*1024)){
+			printf("Reading of Rom(e16): %d !!!!\r\n", address);
+		}*/
 		return __bswap_16(*p);
 	} else {
 		unsigned int ret;
@@ -450,18 +481,46 @@ void m68k_write_memory_32(unsigned int address, unsigned int value) {
 #endif
 
 unsigned char *m68k_pcbase=NULL;
+int dummy =0;
 
 void m68k_pc_changed_handler_function(unsigned int address) {
-//	printf("m68k_pc_changed_handler_function %x\n", address);
+	//printf("m68k_pc_changed_handler_function %x\n", address);
 	const MemmapEnt *mmEnt=getMmmapEnt(address);
-	if (mmEnt->memAddr) {
+	
+	
+/*	
+	uint8_t *p;
+		p=(uint8_t*)get_page0_pointer();
+		m68k_pcbase=p-address;
+		printf("Preload pointer to romstart!\r\n");
+	}else 
+	*/	
+
+	if((address>>MEMMAP_SHIFT)==macRom_addr){
+		//m68k_pcbase = (unsigned char *)&dummy;
+		//m68k_pcbase = (unsigned char *)macRom - 0x400000;
+		
+	} else if (mmEnt->memAddr) {
 		uint8_t *p;
 		p=(uint8_t*)MMAP_RAM_PTR(mmEnt, address);
 		m68k_pcbase=p-address;
-	} else {
+
+/*		
+		if((address>>MEMMAP_SHIFT)==macRom_addr){
+			printf("Preload pointer to rom requested: %p\r\n",  p-address);
+		}*/
+
+		
+		//printf("Preload pointer to:%p\r\n", p-address);
+	} /*else {
 		printf("PC not in mem!\n");
+		printf("address: %d \n", address);
+		printf("macRom_addr: %d\n", macRom_addr);
 		abort();
-	}
+	}*/
+	
+
+	
 }
 
 
@@ -483,13 +542,18 @@ void printFps() {
 void tmeStartEmu(void *rom) {
 	int ca1=0, ca2=0;
 	int x, frame=0;
-	int cyclesPerSec=0;
+	int cyclesPerSec=0;	
+	
+	printf("Display init...\n");
+	sndInit();
+	dispInit();
+	
 	macRom=rom;
 	ramInit();
 	rom_remap=1;
 	regenMemmap(1);
 	printf("Creating HD and registering it...\n");
-	SCSIDevice *hd=hdCreate("hd.img");
+	SCSIDevice *hd=hdCreate("/sd/roms/macplus/mac_hd.raw");
 	ncrRegisterDevice(6, hd);
 	viaClear(VIA_PORTA, 0x7F);
 	viaSet(VIA_PORTA, 0x80);
@@ -502,9 +566,7 @@ void tmeStartEmu(void *rom) {
 	printf("Setting CPU type and resetting...");
 	m68k_set_cpu_type(M68K_CPU_TYPE_68000);
 	m68k_pulse_reset();
-	printf("Display init...\n");
-	sndInit();
-	dispInit();
+
 	localtalkInit();
 	printf("Done! Running.\n");
 	while(1) {

@@ -321,7 +321,7 @@ void sccRecv(int chan, uint8_t *data, int len, int delay) {
 }
 
 void sccTxFinished(int chan) {
-	hexdump(scc.chan[chan].txData, scc.chan[chan].txPos);
+	//hexdump(scc.chan[chan].txData, scc.chan[chan].txPos);
 	localtalkSend(scc.chan[chan].txData, scc.chan[chan].txPos);
 	//Echo back data over Rx of same channel
 //	sccRecv(chan, scc.chan[chan].txData, scc.chan[chan].txPos, 0);
@@ -373,7 +373,7 @@ static void triggerRx(int chan) {
 //	if (!scc.chan[chan].hunting) return;
 	int bufid=scc.chan[chan].rxBufCur;
 	printf("SCC: Receiving bufid %d:\n", bufid);
-	hexdump(scc.chan[chan].rx[bufid].data, scc.chan[chan].rx[bufid].len);
+	//hexdump(scc.chan[chan].rx[bufid].data, scc.chan[chan].rx[bufid].len);
 	if (scc.chan[chan].rx[bufid].data[0]==0xFF || scc.chan[chan].rx[bufid].data[0]==scc.chan[chan].sdlcaddr) {
 		scc.chan[chan].rxPos=0;
 		printf("WR15: 0x%X WR1: %X\n", scc.chan[chan].wr15, scc.chan[chan].wr1);
