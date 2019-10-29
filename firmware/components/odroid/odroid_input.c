@@ -227,7 +227,7 @@ static void odroid_input_task(void *arg)
 
 
                 ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty, 1);
-                ledc_fade_start(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, LEDC_FADE_WAIT_DONE /*LEDC_FADE_NO_WAIT*/);
+                ledc_fade_start(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, LEDC_FADE_WAIT_DONE );
 
                 //ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
 
@@ -292,7 +292,7 @@ void odroid_input_gamepad_init()
     input_gamepad_initialized = true;
 
     // Start background polling
-    xTaskCreatePinnedToCore(&odroid_input_task, "odroid_input_task", 1024 * 2, NULL, 5, NULL, 1);
+    xTaskCreatePinnedToCore(&odroid_input_task, "odroid_input_task", 1024 * 2, NULL, 5, NULL, 0);
 
   	printf("odroid_input_gamepad_init done.\n");
 

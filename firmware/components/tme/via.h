@@ -13,3 +13,4 @@ void viaControlWrite(int no, int val);
 void viaStep(int clockcycles);
 void viaSet(int no, int mask);
 void viaClear(int no, int mask);
+void viaSendKeyTransision(uint8_t keyTransision);

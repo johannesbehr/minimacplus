@@ -20,6 +20,8 @@
 #include "esp_heap_alloc_caps.h"
 #include "mpumouse.h"
 #include "../tme/mouse.h"
+#include "keyboard.h"
+
 #include "../odroid/odroid_input.h"
 #include "spi_semaphore.h"
 
@@ -75,6 +77,9 @@ const int LCD_BACKLIGHT_ON_VALUE = 1;
 
 static spi_device_handle_t spi;
 bool isBackLightIntialized = false;
+
+int d_offset_x = 0;
+int d_offset_y = 0;
 
 static void backlight_init()
 {
@@ -301,6 +306,31 @@ SemaphoreHandle_t dispSem = NULL;
 
 #define NO_SIM_TRANS 5
 #define MEM_PER_TRANS 1024
+extern char *img_keyboard;
+extern char img_cursor[];
+extern char img_cursor_mask[];
+extern bool keyboard_visible;
+extern unsigned char *macRam;
+extern uint8_t key_inversion;
+extern uint16_t  key_inversion_top;
+extern uint16_t  key_inversion_left;
+extern uint16_t  key_inversion_width;
+extern uint16_t  key_inversion_height;
+
+
+int last_mouse_y=0;
+
+void get_mouse(int *x, int *y){
+	*y = (macRam[0x840] << 8) + (macRam[0x841]);
+	if(*y==0){
+		// Mouse is hidden, take last known position
+		*y=last_mouse_y;
+	}else{
+		*y = *y-15; 
+		last_mouse_y = *y;
+	}
+	*x = (macRam[0x82A] << 8) + (macRam[0x82B]);
+}
 
 void IRAM_ATTR displayTask(void *arg) {
 	int x, i;
@@ -350,30 +380,115 @@ void IRAM_ATTR displayTask(void *arg) {
 	}
 	
 	spi_semaphore_give();
-
+	
+	
+	
 	while(1) {
 		xSemaphoreTake(dispSem, portMAX_DELAY); // Wait until Displaydata is available
 		//printf("Display: Taking semaphore..\r\n");
 		spi_semaphore_take();
 		//printf("Display: Got semaphore.\r\n");
+
+		int mouse_y, mouse_x;
+		get_mouse(&mouse_x, &mouse_y);
 		
-		uint8_t *myData=(uint8_t*)currFbPtr;
+		if(mouse_x<512 && mouse_y<342){
+			// Virtual scrolling/Follow mouse, but not on the virtual keyboard
+			if(!keyboard_visible||mouse_y+16<=159){
+				if(mouse_x> (305 + d_offset_x)){
+					d_offset_x = (mouse_x-305);
+					if(d_offset_x>512-320){
+						d_offset_x = 512-320;
+					}
+				}else if(mouse_x -15 < d_offset_x && d_offset_x>0){
+					d_offset_x = mouse_x - 15;
+					if(d_offset_x <0) d_offset_x = 0;
+				}
+				if(mouse_y> (225 + d_offset_y)){
+					d_offset_y = (mouse_y-225);
+					if(d_offset_y>342-240){
+						d_offset_y = 342-240;
+					}
+				}else if(mouse_y -15 < d_offset_y && d_offset_y>0){
+					d_offset_y = mouse_y - 15;
+					if(d_offset_y <0) d_offset_y = 0;
+				}
+			}
+		}
+		
+		
+		
+		mouse_y-= d_offset_y;
+		mouse_x-= d_offset_x;
+		
+		uint8_t *myData=(uint8_t*)currFbPtr + (d_offset_x/8) + (d_offset_y * 64) ;
 
 		send_header_start(spi, 0, 0, 320, 240);
 		send_header_cleanup(spi);
 		int xpos=0;
+		int ypos=0;
+		int omx, omy;
+		int rowOffset = ((512-320)/8);
 		for (x=0; x<320*240; x+=MEM_PER_TRANS) {
 			i=0; 
 			while (i<MEM_PER_TRANS) {
+				
+				// Copy 8 bit
 				for (int j=0x80; j!=0; j>>=1) {
-					dmamem[idx][i++]=(*myData&j)?0:0xffff;
+					//dmamem[idx][i]=(*myData&j)?0:0xffff;
+					
+					if(keyboard_visible && 
+						key_inversion &&
+						xpos>key_inversion_left && 
+						xpos<(key_inversion_left + key_inversion_width) &&
+						ypos>key_inversion_top + 159 && 
+						ypos<(key_inversion_top + key_inversion_height + 159)){
+						dmamem[idx][i]=(*myData&j)?0xffff:0;
+					}else{
+						dmamem[idx][i]=(*myData&j)?0:0xffff;
+					}
+
+					omx = xpos - mouse_x +1;
+					omy = ypos - mouse_y +1;
+						
+					if(keyboard_visible){
+						if((mouse_y+16>=159)){
+							if(omx>= 0 && omx<10 && omy >=0 && omy <16){
+								int c_index = (omx + (omy*10))/8;
+								int c_bit = (omx + (omy*10)) % 8;
+								if(img_cursor_mask[c_index] & (0x80>>c_bit)){
+									dmamem[idx][i]=(img_cursor[c_index] & (0x80>>c_bit))?0:0xffff;
+								}
+							}
+						}
+					}
+					
+					// Mouse rect is 10x16
+					// x-mx 
+					
+					
+					i++;
+					xpos++;
 				}
 				myData++;
-				xpos+=8;
+				//xpos+=8;
+				
 				if (xpos>=320) {
 					xpos=0;
-					myData+=((512-320)/8);
+					ypos++;			
+					myData+=rowOffset;
+					
+					// Display virtual Keyboard
+					if(ypos==240-81 && keyboard_visible){
+						myData = (uint8_t *)img_keyboard;
+						rowOffset = 0;
+					}
+
 				}
+
+				// Copy mouse to this fragment
+				
+				
 			}
 			trans[idx].length=MEM_PER_TRANS*16;
 			trans[idx].user=(void*)1;
@@ -406,11 +521,14 @@ void IRAM_ATTR displayTask(void *arg) {
 	}
 }
 
-odroid_gamepad_state joystick;
+odroid_gamepad_state joystick, last_joystick;
 
 int mv_x = 0;
 int mv_y = 0;
 int v_max = 10;
+
+extern int dumpBlock;
+extern int dumpRequest;
 
 void dispDraw(uint8_t *mem) {
 	int dx=0, dy=0, btn=0;
@@ -419,48 +537,152 @@ void dispDraw(uint8_t *mem) {
 
 	odroid_input_gamepad_read(&joystick);
 
-	if(joystick.values[ODROID_INPUT_DOWN]){
-		mv_y++;
-		dy=mv_y>>2;
-	}else{
-		if(mv_y>0){
-			mv_y = 0;
+	if(joystick.values[ODROID_INPUT_B]&&!last_joystick.values[ODROID_INPUT_B]){
+		// Toggle Keyboard
+		set_keyboard_visible(!keyboard_visible);
+	}
+	
+	/*
+	if(joystick.values[ODROID_INPUT_START]&&!last_joystick.values[ODROID_INPUT_START]){
+		dumpRequest = true;
+	}
+
+	if(joystick.values[ODROID_INPUT_MENU]&&!last_joystick.values[ODROID_INPUT_MENU]){
+		if(dumpBlock>0){
+			dumpBlock--;
+			printf("Selecting Mem Block:%d\r\n", dumpBlock);
 		}
 	}
 	
-	if(joystick.values[ODROID_INPUT_UP]){
-		mv_y--;
-		dy=mv_y>>2;
-	}else{
-		if(mv_y<0){
-			mv_y = 0;
+	if(joystick.values[ODROID_INPUT_VOLUME]&&!last_joystick.values[ODROID_INPUT_VOLUME]){
+		if(dumpBlock<31){
+			dumpBlock++;
+			printf("Selecting Mem Block:%d\r\n", dumpBlock);
 		}
 	}
-	
-	
-	if(joystick.values[ODROID_INPUT_RIGHT]){
-		mv_x++;
-		dx=mv_x>>2;
-	}else{
-		if(mv_x>0){
-			mv_x = 0;
+*/
+
+
+	if(joystick.values[ODROID_INPUT_SELECT]){
+		if(joystick.values[ODROID_INPUT_DOWN]){
+			mv_y++;
+			d_offset_y+=mv_y>>2;
+			if(d_offset_y>102)d_offset_y=102;
+		}else{
+			if(mv_y>0){
+				mv_y = 0;
+			}
 		}
-	}
-	if(joystick.values[ODROID_INPUT_LEFT]){
-		mv_x--;
-		dx=mv_x>>2;
+		
+		if(joystick.values[ODROID_INPUT_UP]){
+			mv_y--;
+			d_offset_y+=mv_y>>2;
+			if(d_offset_y<0)d_offset_y=0;
+		}else{
+			if(mv_y<0){
+				mv_y = 0;
+			}
+		}
+		
+		
+		if(joystick.values[ODROID_INPUT_RIGHT]){
+			mv_x++;
+			d_offset_x+=mv_x>>2;
+			if(d_offset_x>192)d_offset_x=192;
+		}else{
+			if(mv_x>0){
+				mv_x = 0;
+			}
+		}
+		if(joystick.values[ODROID_INPUT_LEFT]){
+			mv_x--;
+			d_offset_x+=mv_x>>2;
+			if(d_offset_x<0)d_offset_x=0;
+		}else{
+			if(mv_x<0){
+				mv_x = 0;
+			}
+		}
 	}else{
-		if(mv_x<0){
-			mv_x = 0;
+		if(joystick.values[ODROID_INPUT_DOWN]){
+			mv_y++;
+			dy=mv_y>>2;
+		}else{
+			if(mv_y>0){
+				mv_y = 0;
+			}
+		}
+		
+		if(joystick.values[ODROID_INPUT_UP]){
+			mv_y--;
+			dy=mv_y>>2;
+		}else{
+			if(mv_y<0){
+				mv_y = 0;
+			}
+		}
+		
+		if(joystick.values[ODROID_INPUT_RIGHT]){
+			mv_x++;
+			dx=mv_x>>2;
+		}else{
+			if(mv_x>0){
+				mv_x = 0;
+			}
+		}
+		if(joystick.values[ODROID_INPUT_LEFT]){
+			mv_x--;
+			dx=mv_x>>2;
+		}else{
+			if(mv_x<0){
+				mv_x = 0;
+			}
 		}
 	}
 
-
-	if(joystick.values[ODROID_INPUT_A]){btn =1;}
+	int mouse_x=0, mouse_y=0;
+	if(keyboard_visible){
+		get_mouse(&mouse_x, &mouse_y);
+		mouse_y-= d_offset_y;
+		mouse_x-= d_offset_x;
+	}
+	
+	if(mouse_y>=159){
+		mouse_on_keyboard_event(mouse_x, mouse_y-159, joystick.values[ODROID_INPUT_A]);
+	}else{
+		if(joystick.values[ODROID_INPUT_A]){
+			btn =1;
+		}else if(last_joystick.values[ODROID_INPUT_A]){
+			// Key might still be pressed, so notify Keyboard that key was released.
+			mouse_on_keyboard_event(mouse_x, mouse_y-159, joystick.values[ODROID_INPUT_A]);
+		}
+	}
+	
+/*	
+	if(joystick.values[ODROID_INPUT_A]){
+	
+		
+		if(keyboard_visible){
+			mouseY = (macRam[0x840] << 8) + (macRam[0x841])- d_offset_y - 15;
+			mouseX = (macRam[0x82A] << 8) + (macRam[0x82B])- d_offset_x;
+		}
+		
+		if(mouseY>=159){
+			if(!last_joystick.values[ODROID_INPUT_A]){
+				printf("Virtual Keyboard klicked at: (%d/%d)", mouseX, mouseY);
+				viaSendKeyTransision();
+			}		
+		}else{
+			btn =1;
+		}
+	}
+*/	
+	
 //	if(joystick.values[ODROID_INPUT_B])js +=0x20;
 //	if(joystick.values[ODROID_INPUT_SELECT])js +=0x40;
 //	if(joystick.values[ODROID_INPUT_START])js +=0x80;
 	
+	last_joystick = joystick;
 	
 	
 	//mpuMouseGetDxDyBtn(&dx, &dy, &btn);

@@ -34,17 +34,20 @@ void viaIrq();
 #define PCR_MAN_LO		6
 #define PCR_MAN_HI		7
 
+#define VIA_SR_QUEUE_LENGTH 16
 
 typedef struct {
-	uint8_t ddra, ddrb;
-	uint8_t ina, inb;
-	uint8_t outa, outb;
+	uint8_t ddra, ddrb; // Data Direction register A, Data Direction register B 
+	uint8_t ina, inb; // Data register A, Data register B 
+	uint8_t outa, outb; // Data register A, Data register B 
 	int timer1, timer2;
 	uint16_t latch1, latch2;
-	uint8_t ifr, ier;
-	uint8_t pcr, acr;
+	uint8_t ifr, ier; // Interrupt Flag register, Interrupt Enable register
+	uint8_t pcr, acr; // Peripheral Control register, Auxiliary Control register
 	uint8_t controlin[2];
 	int srTicks;
+	uint8_t sr_inquiry;
+	uint8_t sr_queue[VIA_SR_QUEUE_LENGTH+2]; // Queue for SR key transitions
 } Via;
 
 static Via via;
@@ -53,6 +56,32 @@ static const char* const viaRegNames[]={
 	"ORB", "ORA", "DDRB", "DDRA", "T1C-L", "T1C-H", "T1L-L", "T1L-H", "T2L-L",
 	"T2C-H", "SR", "ACR", "PCR", "IFR", "IER", "ORA-NC"
 };
+
+
+void viaSendKeyTransision(uint8_t keyTransision){
+	//via.sr_queue[0] current write position
+	//via.sr_queue[1] current read position
+	//via.sr_queue[2..VIA_SR_QUEUE_LENGTH-1] queue buffer
+	
+	via.sr_queue[via.sr_queue[0]+2]=keyTransision;
+	via.sr_queue[0]=(via.sr_queue[0]+1)%VIA_SR_QUEUE_LENGTH;
+	
+	//via.sr = keyTransision;
+}
+
+uint8_t  viaGetKeyTransision(){
+	//via.sr_queue[0] schreiben
+	//via.sr_queue[1] lesen
+	uint8_t res = 0x7B; // Default value meaning NULL
+	
+	if(via.sr_queue[1]!=via.sr_queue[0]){
+		res = via.sr_queue[via.sr_queue[1]+2];
+		via.sr_queue[1]=(via.sr_queue[1]+1)%VIA_SR_QUEUE_LENGTH;
+	}
+	
+	return res;
+}
+
 
 
 void viaSet(int no, int mask) {
@@ -190,7 +219,10 @@ void viaWrite(unsigned int addr, unsigned int val) {
 	} else if (addr==0xa) {
 		//SR
 		via.srTicks=8;
-//		printf("6522: Unimplemented: Write %x to SR?\n", val);
+		/*if(val==0x10){
+			via.sr_inquiry = 1;
+		}*/
+		//printf("6522: Unimplemented: Write %x to SR?\n", val);
 	} else if (addr==0xb) {
 		//ACR
 		via.acr=val;
@@ -219,7 +251,7 @@ void viaWrite(unsigned int addr, unsigned int val) {
 		viaCbPortAWrite(val);
 		via.ina=(via.ina&~via.ddra)|(val&via.ddra);
 	}
-//	printf("PC %x VIA write %s val %x\n", pc, viaRegNames[addr], val);
+	//printf("PC %x VIA write %s val %x\n", pc, viaRegNames[addr], val);
 }
 
 
@@ -265,8 +297,20 @@ unsigned int viaRead(unsigned int addr) {
 	} else if (addr==0xa) {
 		//SR
 		via.ifr&=~IFR_SR;
-		val=0xff;
-//		printf("6522: Unimplemented: Read from SR?\n");
+		//val=0xff;
+		//val=via.sr;
+		//via.sr = 0x7b;//0xff;
+		//if(via.sr_inquiry){		
+			val = viaGetKeyTransision();
+			//via.sr_inquiry = 0;
+		//}else{
+			//val = 0x7b;
+		//}
+		/*if(val!=0x7b){
+			printf("Read from VAl SR: %x\r\n", val);
+		}*/
+		
+		//printf("6522: Unimplemented: Read from SR?\n");
 	} else if (addr==0xb) {
 		//ACR
 		val=via.acr;
@@ -283,6 +327,6 @@ unsigned int viaRead(unsigned int addr) {
 		//ORA
 		val=via.ina;
 	}
-//	printf("PC %x VIA read %s val %x\n", pc, viaRegNames[addr], val);
+	//printf("PC %x VIA read %s val %x\n", pc, viaRegNames[addr], val);
 	return val;
 }

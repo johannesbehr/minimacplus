@@ -33,6 +33,7 @@
 #include <byteswap.h>
 #include "esp_spiram.h"
 #include "network/localtalk.h"
+#include "hexdump.h"
 
 
 unsigned char *macRom;
@@ -48,6 +49,9 @@ unsigned char *macRam;
 #define MEMADDR_DUMMY_CACHE (void*)1
 
 int rom_remap, video_remap=0, audio_remap=0, audio_volume=0, audio_en=0;
+
+int dumpBlock = 0;
+ int dumpRequest = false;
 
 void m68k_instruction() {
 	unsigned int pc=m68k_get_reg(NULL, M68K_REG_PC);
@@ -348,7 +352,7 @@ static void ramInit() {
 	macSnd[0]=&macRam[TME_SNDBUF];
 	macSnd[1]=&macRam[TME_SNDBUF_ALT];
 	printf("Clearing ram...\n");
-	for (int x=0; x<TME_RAMSIZE; x++) macRam[x]=rand();
+	for (int x=0; x<TME_RAMSIZE; x++) macRam[x]=0;//rand();
 }
 #endif
 
@@ -523,6 +527,29 @@ void m68k_pc_changed_handler_function(unsigned int address) {
 	
 }
 
+void dumpMem(){
+	if(dumpRequest){
+		//int length = 64*2048; // One block in Memory
+		//int startAddress = length * dumpBlock;
+		
+		int length = 2048; // One block in Memory
+		int startAddress = 704;
+		
+		printf("Hexdump;%d;%d\n", startAddress, length);
+		compressedHexDump(&macRam[startAddress],length);
+		dumpRequest = false;
+	}
+	
+}
+
+void PrintMousePos(){
+//	int mouseX = (macRam[0x840] << 8) + (macRam[0x841]);
+//	int mouseY = (macRam[0x82A] << 8) + (macRam[0x82B]);
+	int mouseY = (macRam[0x840] << 8) + (macRam[0x841]) - 15;
+	int mouseX = (macRam[0x82A] << 8) + (macRam[0x82B]);
+	printf("Mouse at: (%d/%d)\n", mouseX, mouseY);
+}
+
 
 //Should be called every second. 
 void printFps() {
@@ -539,6 +566,53 @@ void printFps() {
 	oldtv.tv_usec=tv.tv_usec;
 }
 
+bool file_exist (char *filename)
+{
+  struct stat  buffer;   
+  return (stat (filename, &buffer) == 0);
+}
+
+
+int scsi_addr = 6;
+bool try_load_disk(char *filename,uint8_t is_floppy){
+	
+	SCSIDevice *device;
+	if(file_exist(filename)){
+		if(is_floppy){
+			device=fdCreate(filename);
+		}else{
+			device=hdCreate(filename);
+		}
+		if(device!=NULL){
+			ncrRegisterDevice(scsi_addr, device);
+			printf("Loaded File %s as SCSI-Device %d.\r\n", filename, scsi_addr);
+			scsi_addr--;
+			return true;
+		}
+	}else{
+		printf("File %s does not exist.\r\n", filename);
+	}
+	return false;
+}
+
+void load_image_file(char *filename){
+	SCSIDevice *device;
+	if(scsi_addr>2){
+		device=fdCreate(filename);
+		if(device!=NULL){
+			ncrRegisterDevice(scsi_addr, device);
+			printf("Loaded File %s as SCSI-Device %d.\r\n", filename, scsi_addr);
+			scsi_addr--;
+			return true;
+		}else{
+			printf("Could not load File %s!.\r\n", filename);
+		}
+	}else{
+			printf("Could not load File %s because only 4 Images at a time can be loaded!.\r\n", filename);
+		
+	}
+}
+
 void tmeStartEmu(void *rom) {
 	int ca1=0, ca2=0;
 	int x, frame=0;
@@ -552,9 +626,27 @@ void tmeStartEmu(void *rom) {
 	ramInit();
 	rom_remap=1;
 	regenMemmap(1);
-	printf("Creating HD and registering it...\n");
-	SCSIDevice *hd=hdCreate("/sd/roms/macplus/mac_hd.raw");
-	ncrRegisterDevice(6, hd);
+	
+	
+	// Search for files. 
+	// If file ends with "image" or "drv" add it as floppy
+	// if file ends with "raw" add it as drive image
+    // Count drives, add maximal n devices...
+
+	/*
+	try_load_disk("/sd/roms/macplus/mac_fd1.dsk", 1);
+	try_load_disk("/sd/roms/macplus/mac_fd2.dsk", 1);
+	try_load_disk("/sd/roms/macplus/mac_fd3.dsk", 1);
+	
+	try_load_disk("/sd/roms/macplus/mac_hd.raw", 0);
+	try_load_disk("/sd/roms/macplus/mac_hd1.raw", 0);
+	try_load_disk("/sd/roms/macplus/mac_hd2.raw", 0);
+	*/
+	
+//	SCSIDevice *hd=hdCreate("/sd/roms/macplus/mac_hd.raw");
+//	ncrRegisterDevice(6, hd);
+	
+	
 	viaClear(VIA_PORTA, 0x7F);
 	viaSet(VIA_PORTA, 0x80);
 	viaClear(VIA_PORTA, 0xFF);
@@ -568,6 +660,8 @@ void tmeStartEmu(void *rom) {
 	m68k_pulse_reset();
 
 	localtalkInit();
+	printf("Ram size is: %x\n",TME_RAMSIZE);
+	
 	printf("Done! Running.\n");
 	while(1) {
 		for (x=0; x<8000000/60; x+=1000) {
@@ -603,6 +697,8 @@ void tmeStartEmu(void *rom) {
 			frame=0;
 			printFps();
 			printf("%d Hz\n", cyclesPerSec);
+			//dumpMem();
+			PrintMousePos();
 			cyclesPerSec=0;
 		}
 	}

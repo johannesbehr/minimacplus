@@ -56,7 +56,7 @@ void sndTask(void *arg) {
 		//i2s_write_bytes(0, (char*)tmpb, sizeof(tmpb), portMAX_DELAY);
 //		printf("snd %d\n", rp);
 		//vTaskDelay(10 / portTICK_RATE_MS);
-		vTaskDelay(1);
+		//vTaskDelay(1);
 	}
 }
 
@@ -99,6 +99,19 @@ void sndInit() {
             .dma_buf_len = 512,  // (416samples * 2ch * 2(short)) = 1664
             .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,                                //Interrupt level 1
             .use_apll = 0 //1
+        };	 i2s_config_t i2s_config = {
+            //.mode = I2S_MODE_MASTER | I2S_MODE_TX,                                  // Only TX
+            .mode = I2S_MODE_MASTER | I2S_MODE_TX | I2S_MODE_DAC_BUILT_IN,
+            .sample_rate = audio_sample_rate,
+            .bits_per_sample = 16,
+            .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,                           //2-channels
+            .communication_format = I2S_COMM_FORMAT_I2S_MSB,
+            //.communication_format = I2S_COMM_FORMAT_PCM,
+            .dma_buf_count = 6,
+            //.dma_buf_len = 1472 / 2,  // (368samples * 2ch * 2(short)) = 1472
+            .dma_buf_len = 512,  // (416samples * 2ch * 2(short)) = 1664
+            .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,                                //Interrupt level 1
+            .use_apll = 0 //1
         };
 
         i2s_driver_install(I2S_NUM, &i2s_config, 0, NULL);
@@ -107,7 +120,7 @@ void sndInit() {
         i2s_set_dac_mode( I2S_DAC_CHANNEL_BOTH_EN);
 		*/
 	
-	
+	/*
 	i2s_config_t cfg={
 		.mode=I2S_MODE_DAC_BUILT_IN|I2S_MODE_TX|I2S_MODE_MASTER,
 		.sample_rate=22200,
@@ -120,6 +133,25 @@ void sndInit() {
 	};
 	i2s_driver_install(I2S_NUM_0, &cfg, 4, &soundQueue);
 	i2s_set_pin(I2S_NUM_0, NULL);
+*/
+
+
+	i2s_config_t cfg={
+		.mode=I2S_MODE_DAC_BUILT_IN|I2S_MODE_TX|I2S_MODE_MASTER,
+		.sample_rate=22200,
+		.bits_per_sample=16,
+		.channel_format=I2S_CHANNEL_FMT_RIGHT_LEFT,
+		.communication_format=I2S_COMM_FORMAT_I2S_MSB,
+		//.intr_alloc_flags=0,
+		.dma_buf_count=8,
+		.dma_buf_len=1024/8,
+		
+		.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,                                //Interrupt level 1
+		.use_apll = 0 //1
+		
+	};
+	i2s_driver_install(0, &cfg, 4, &soundQueue);
+	i2s_set_pin(0, NULL);
 	i2s_set_dac_mode(I2S_DAC_CHANNEL_LEFT_EN);
 	i2s_set_sample_rates(0, cfg.sample_rate);
 
@@ -132,7 +164,7 @@ void sndInit() {
 	gpio_config(&io_conf_amp);
 
 
-#if 1
+#if 0 // What ever the following does it produces a horrible sound on the odroid go...
 	//I2S enables *both* DAC channels; we only need DAC2. DAC1 is connected to the select button.
 	CLEAR_PERI_REG_MASK(RTC_IO_PAD_DAC1_REG, RTC_IO_PDAC1_DAC_XPD_FORCE_M);
 	CLEAR_PERI_REG_MASK(RTC_IO_PAD_DAC1_REG, RTC_IO_PDAC1_XPD_DAC_M);
@@ -144,6 +176,7 @@ void sndInit() {
 	};
 	gpio_config(&io_conf);
 #endif
+	
 	xTaskCreatePinnedToCore(&sndTask, "snd", 3*1024, NULL, 5, NULL, 1);
 	
 	printf("Init Sond done.\r\n");

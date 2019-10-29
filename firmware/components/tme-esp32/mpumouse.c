@@ -23,7 +23,7 @@
 
 
 portMUX_TYPE dxdyMux=portMUX_INITIALIZER_UNLOCKED;
-static int dx, dy, btn;
+static int dx, dy;
 
 void mpuMouseGetDxDyBtn(int *pDx, int *pDy, int *pBtn) {
 	printf("Mouse: %d %d\n", dx, dy);

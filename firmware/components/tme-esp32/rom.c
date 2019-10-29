@@ -19,6 +19,8 @@ uint8_t *rom_cache[ROM_CACHE_PAGE_SLOTS];
 uint8_t rom_slots[ROM_CACHE_PAGE_SLOTS];
 uint16_t rom_slot_age[ROM_CACHE_PAGE_SLOTS];
 
+uint8_t patch_rom = true;
+
 void change_value(int address, uint16_t value, int page, int slot){
 	if((address>>ROM_CACHE_PAGE_SHIFT)==page){
 		int rel_addr = address & (ROM_CACHE_PAGE_SIZE-1);
@@ -67,7 +69,9 @@ void load_rom_page(int page_to_load, int slot){
 	int res = fread(rom_cache[slot],1,ROM_CACHE_PAGE_SIZE,romfile);
 	rom_slots[slot] = page_to_load;
 	spi_semaphore_give();
-	apply_patches(page_to_load, slot);
+	if(patch_rom){
+		apply_patches(page_to_load, slot);
+	}
 	printf("Page %d loaded to slot %d, %d bytes...\r\n",page_to_load,slot, res);
 }
 

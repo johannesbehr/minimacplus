@@ -7,6 +7,43 @@
 #include <ctype.h>
 #include <stdint.h>
 
+void compressedHexDump(void *mem, int len, int adrStart) {
+	uint8_t *data=(uint8_t*)mem;
+	int pos=0;
+	while (pos<len) {
+		//Print address
+		//printf("%08x", pos+adrStart);
+		//Print hex bytes
+		for (int i=0; i<64; i++) {
+			//if ((i&7)==0) printf(" ");
+			if (pos+i<len) {
+				printf("%02x", data[pos+i]);
+			} /*else {
+				printf("   ");
+			}*/
+		}
+		printf("\n");
+		pos+=64;
+	}
+/*				
+		//Print ASCII bytes
+		printf("  |");
+		for (int i=0; i<16; i++) {
+			//Abort if at end
+			if (pos+i>=len) break;
+			//Print if printable
+			if (isprint((int)data[pos+i])) {
+				printf("%c", data[pos+i]);
+			} else {
+				printf(".");
+			}
+		}
+		printf("|\n");
+		pos+=16;
+	}
+	printf("%08x\n", adrStart+len);*/
+}
+
 void hexdumpFrom(void *mem, int len, int adrStart) {
 	uint8_t *data=(uint8_t*)mem;
 	int pos=0;
