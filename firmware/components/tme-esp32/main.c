@@ -181,6 +181,7 @@ void app_main()
 					strcasecmp(".dsk", &fname[flen-4]) == 0||
 					strcasecmp(".image", &fname[flen-6]) == 0||
 					strcasecmp(".ima", &fname[flen-4]) == 0||
+					strcasecmp(".img", &fname[flen-4]) == 0||
 					strcasecmp(".hfv", &fname[flen-4]) == 0){
 				sprintf(fullname, "/sd/roms/macplus/%s", fname);
 				load_image_file(fullname);
